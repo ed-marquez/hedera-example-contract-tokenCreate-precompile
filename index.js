@@ -42,12 +42,15 @@ async function main() {
 	const bobKey = PrivateKey.generateED25519();
 	const [bobSt, bobId] = await accountCreateFcn(bobKey, initBalance, client);
 	console.log(`- Bob's account: https://hashscan.io/#/testnet/account/${bobId}`);
+	const carolKey = PrivateKey.generateED25519();
+	const [carolSt, carolId] = await accountCreateFcn(carolKey, initBalance, client);
+	console.log(`- Carol's account: https://hashscan.io/#/testnet/account/${carolId}`);
 
 	// Deploy the contract
 	const bytecode = fs.readFileSync("./binaries/TokenCreateContract_sol_TokenCreator.bin");
 	let gasLimit = 100000;
-	// const [contractId, contractAddress] = await contractDeployFcn(bytecode, gasLimit, client);
-	const contractId = "0.0.48216014";
+	const [contractId, contractAddress] = await contractDeployFcn(bytecode, gasLimit, client);
+	// const contractId = "0.0.48216014";
 
 	console.log(`\n- Deployed smart contract with ID: ${contractId}`);
 	// console.log(`- The smart contract ID in Solidity format is: ${contractId.toSolidityAddress()}`);
@@ -56,7 +59,7 @@ async function main() {
 	console.log(`\n- STEP 2 ===================================\n`);
 	// Create the NFT by executing a contract function
 	let gasLimHi = 4000000;
-	let payAmt = new Hbar(20);
+	let payAmt = new Hbar(50);
 	let fcnName = "createNft";
 	let fcnParams = new ContractFunctionParameters()
 		.addString("myToken")
@@ -64,7 +67,11 @@ async function main() {
 		.addString("No Memo")
 		.addUint32(250)
 		.addUint32(7700000)
-		.addBytes(operatorKey.publicKey.toBytes());
+		.addBytes(operatorKey.publicKey.toBytes())
+		.addUint32(5)
+		.addUint32(10)
+		.addUint32(7 * 1e8)
+		.addAddress(bobId.toSolidityAddress());
 
 	const nftCreateRec = await contractExecuteNoSignFcn(
 		contractId,
@@ -117,16 +124,18 @@ async function main() {
 	await queries.balanceCheckerFcn(contractId, tokenId, client);
 	await queries.balanceCheckerFcn(aliceId, tokenId, client);
 	await queries.balanceCheckerFcn(bobId, tokenId, client);
+	await queries.balanceCheckerFcn(carolId, tokenId, client);
 
 	console.log(`\n- STEP 4 ===================================\n`);
 
 	// Transfer NFTS and collect royalties
+	const nft2send = 5;
 	payAmt = new Hbar(3);
 	fcnName = "sendNft";
 	fcnParams = new ContractFunctionParameters()
 		.addAddress(tokenId.toSolidityAddress())
 		.addAddress(aliceId.toSolidityAddress())
-		.addInt64(3)
+		.addInt64(nft2send)
 		.addAddress(bobId.toSolidityAddress());
 
 	const nftSendRec = await contractExecuteSignFcn(
@@ -149,6 +158,26 @@ async function main() {
 	await queries.balanceCheckerFcn(contractId, tokenId, client);
 	await queries.balanceCheckerFcn(aliceId, tokenId, client);
 	await queries.balanceCheckerFcn(bobId, tokenId, client);
+	await queries.balanceCheckerFcn(carolId, tokenId, client);
+
+	const nftIdX = new NftId(tokenId, nft2send);
+	const transferTx = await new TransferTransaction()
+		.addNftTransfer(nftIdX, aliceId, carolId)
+		.addHbarTransfer(carolId, -2)
+		.addHbarTransfer(aliceId, 2)
+		.freezeWith(client)
+		.sign(aliceKey);
+	const transferSign = await transferTx.sign(carolKey);
+	const transferSubmit = await transferSign.execute(client);
+	const transferRx = await transferSubmit.getReceipt(client);
+	console.log(`\n- Sent NFT from Alice -> Carol: ${transferRx.status}\n`);
+
+	// Show balances
+	await queries.balanceCheckerFcn(operatorId, tokenId, client);
+	await queries.balanceCheckerFcn(contractId, tokenId, client);
+	await queries.balanceCheckerFcn(aliceId, tokenId, client);
+	await queries.balanceCheckerFcn(bobId, tokenId, client);
+	await queries.balanceCheckerFcn(carolId, tokenId, client);
 
 	console.log(`\n- DONE ===================================\n`);
 	console.log(`- See Operator history: https://hashscan.io/#/testnet/account/${operatorId}`);
